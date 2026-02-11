@@ -1,0 +1,274 @@
+---
+title: "Analisis del salario en Argentina por actividad"
+author: "Tomás Montemagno"
+date: '2022-08-07'
+output:
+  html_document:
+    df_print: paged
+---
+```{r librerias, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggmap)
+library(sf)
+library(scales)
+library(forcats)
+library(plotly)
+library(gganimate)
+library(stringr)
+
+base_1 <- read.csv (file="./data/w_mean_depto_priv_clae2.csv") 
+
+diccionario_clae <- read.csv (file="./data/diccionario_clae2.csv") 
+
+deptos_map <- read_sf("./data/departamentos_arg.geojson")
+
+sueldo_filtro_fecha <- base_1 %>%
+  filter(fecha >= 2022) %>% 
+  filter(w_mean <500000)
+
+sueldo_limpia <- sueldo_filtro_fecha %>% 
+  select (codigo_departamento_indec,id_provincia_indec ,w_mean) %>% 
+  group_by(codigo_departamento_indec, id_provincia_indec) %>% 
+  summarise(media = mean(w_mean,na.rm = TRUE))
+
+deptos_map$codpcia <- as.integer(deptos_map$codpcia)
+deptos_map$codigo_departamento_indec <- as.integer(deptos_map$codigo_departamento_indec)
+
+
+geom_limpia <- deptos_map %>% 
+  select(codpcia,provincia,codigo_departamento_indec,geometry)
+
+base_final <- geom_limpia %>% 
+  inner_join(sueldo_limpia)
+
+```
+
+
+
+
+Al observar la distribución salarial en Argentina por departamento y provincia durante el 2022 notamos como la media salarial es menor en la región noroeste del país, mientras que en la zona pampeana y en el sureste esta media es mayor. 
+
+
+
+
+
+```{r mapa_coroplético, echo=FALSE}
+ggplot(base_final) + 
+  geom_sf(aes(fill= media),color = NA)+
+  scale_fill_viridis_c() +
+  labs(title = "Argentina",
+       subtitle = "2022. Fuente: Ministerio de Desarrollo Productivo",
+       fill = "media salarial en pesos") +
+  theme_void()
+```
+
+
+
+
+A partir de esta observación notamos la existencia de una distribución desigual del salario según la zona geográfica del país. 
+A su vez existen actividades laborales que conservan su posición como las mejores pagas desde el 2012. Los suministros de electricidad, gas, vapor y aire acondicionado y la explotación de minas y canteras acrecentaron la brecha salarial con el resto de las actividades luego del 2014 con promedios salariales que en 2022 llegan a 250000 pesos. 
+
+
+
+
+
+```{r include=FALSE}
+base_1$fecha <- as.Date.character(base_1$fecha)
+
+
+join_base1_dicclae <- base_1 %>% 
+  inner_join(diccionario_clae) %>% 
+  select(fecha,letra,letra_desc,w_mean) %>% 
+  group_by(fecha,letra_desc,letra) %>% 
+  summarise(media3 = mean(w_mean,na.rm= TRUE))
+
+join_base1_dicclae$year <- as.numeric(format(join_base1_dicclae$fecha, "%Y"))
+
+join_base1_dicclae_year <- join_base1_dicclae %>% 
+  select(year,letra_desc,letra,media3) %>% 
+  group_by(letra_desc,year,letra) %>% 
+  summarise(media4 = mean(media3,na.rm=TRUE))
+
+
+join_base1_dicclae_ranking <- join_base1_dicclae_year %>% 
+  group_by(year) %>% 
+  arrange(year, desc(media4)) %>% 
+  mutate(ranking = row_number()) %>% 
+  filter(ranking<=10)
+```
+```{r plot_carrera_barras, echo=FALSE}
+anim1 <- ggplot(join_base1_dicclae_ranking, aes(group = letra_desc)) +
+  geom_col(aes(x =media4, y = factor(ranking), fill = letra_desc)) +
+  geom_text((aes(x = media4, y = factor(ranking), label = letra_desc)),position = position_dodge(width=0.9),size = 3) +
+  theme_minimal() +
+  transition_time(year) +
+  theme(legend.position = "none")+
+  labs(y = "Actividad",
+       x = "promedio en pesos",
+       title = "Actividades con mayor nivel de ingresos",
+       subtitle = "year: {frame_time}. Fuente: Ministerio de Desarrollo Productivo")
+  
+animate(anim1, fps = 5)
+```
+
+
+
+
+
+
+Notamos también que la brecha salarial entre actividades tiene una lógica geográfica. Si observamos la distribución salarial de las actividades de suministro de energía y de explotación de minas y canteras entre provinicas observamos una distribución favorable a la zona sur del país. Estas actividades, al ser las mejores pagas, son las que definen la media salarial de las provincias a nivel país. 
+
+
+
+
+
+```{r include=FALSE}
+sueldo_limpia_2 <- sueldo_filtro_fecha %>%
+      inner_join(diccionario_clae, by = "clae2" ) %>% 
+      select (codigo_departamento_indec,letra,id_provincia_indec ,w_mean) %>% 
+      group_by(codigo_departamento_indec, letra, id_provincia_indec) %>% 
+      summarise(media = mean(w_mean,na.rm = TRUE)) %>% 
+      filter(letra == "B")
+      
+    
+    base_final_2 <- geom_limpia %>% 
+      inner_join(sueldo_limpia_2)
+```
+
+```{r echo=FALSE}
+  options(scipen = 999)
+ ggplot(base_final_2) + 
+      geom_sf(aes(fill= media),color = NA)+
+      scale_fill_viridis_c() +
+      labs(
+           subtitle = "Media salarial en explotacion de minas y canteras en 2022",
+           fill = "media salarial") +
+      theme_void()
+```
+```{r include=FALSE}
+ sueldo_limpia_3 <- sueldo_filtro_fecha %>%
+      inner_join(diccionario_clae, by = "clae2" ) %>% 
+      select (codigo_departamento_indec,letra,id_provincia_indec ,w_mean) %>% 
+      group_by(codigo_departamento_indec, letra, id_provincia_indec) %>% 
+      summarise(media = mean(w_mean,na.rm = TRUE)) %>% 
+      filter(letra == "D")
+      
+    
+    base_final_3 <- geom_limpia %>% 
+      inner_join(sueldo_limpia_3)
+```
+```{r echo=FALSE}
+ ggplot(base_final_3) + 
+      geom_sf(aes(fill= media),color = NA)+
+      scale_fill_viridis_c() +
+      labs(
+           subtitle = "Media salarial suministros de energia en 2022",
+           fill = "media salarial") +
+      theme_void()
+```
+
+
+
+
+Por otro lado, podemos observar las actividades con menores ingresos. Por ejemplo, los servicios artísticos, culturales y de esparcimiento, los servicios de alojamiento y de comida y la enseñanza tienen medias salariales que no superan los 60000 pesos en el 2022.
+
+
+
+
+
+```{r base_actividades_menores_ingresos, include=FALSE}
+base_sueldos_actividad_join <- sueldo_filtro_fecha %>% 
+  inner_join(diccionario_clae)
+
+options(scipen = 999)
+base_agrupada_por_actividad <- base_sueldos_actividad_join %>% 
+  select(letra_desc,w_mean) %>% 
+  group_by(letra_desc) %>% 
+  summarise(mediana2 = mean(w_mean,na.rm=TRUE)) %>%
+  filter(mediana2<70000)
+```
+
+
+```{r plot, echo=FALSE}
+ggplot(base_agrupada_por_actividad, aes(x = mediana2, y = fct_reorder(letra_desc,mediana2), fill = letra_desc)) +
+  geom_col()+
+  labs(y = "Actividad",
+       x = "salario promedio en pesos (2022)",
+       title = "Actividades con menor nivel de ingresos",
+       subtitle = "Fuente: Ministerio de Desarrollo Productivo") +
+  theme(legend.position = "none")+
+  theme (text = element_text(size = 8))+
+  theme(plot.title = element_text(size = 10))+
+  theme(axis.title.x = element_text(size = 8))+
+  theme(axis.title.y = element_text(size = 8))
+```
+
+
+
+
+
+Si comparamos la evolución salarial entre las actividades de suministro de energía y explotación de recursos naturales, con la de enseñanza y servicios artísticos y culturales, observamos como la brecha salarial se acentúa en los últimos años.
+
+
+
+
+```{r plot_evolución_4_actividades, echo=FALSE}
+options(scipen = 999)
+  ggplot(filter(join_base1_dicclae,letra == "D" | letra=="B" |letra == "R" |letra =="P"),
+                aes(x = fecha, y = media3, color = letra_desc ))+
+    geom_line()+
+    geom_point()+
+    theme(legend.position = "bottom")+
+    theme(legend.text = element_text(size = 5))+
+    guides(color=guide_legend(nrow=2,byrow=TRUE))+
+    labs(y= "media salarial en pesos",
+         x = "year",
+         Title = "Evolucion del salario de las actividades con mayores ingresos",
+         Subtitle = "Fuente: Ministerio de Desarrollo Productivo",
+         color = NULL)
+
+```
+
+
+
+
+
+
+Desde el 2014 al 2022  enseñanza creció la media salarial un 984% y servicios artísticos, culturales y deportivos un 884%. Por otro lado,  exlplotación de minas y canterars y suministros de energía 1171% y 1145% respectivamente.
+
+
+
+
+
+```{r Base4_actividades_pivot, include=FALSE}
+
+  tabla_4_actividades_test <- join_base1_dicclae_year %>% 
+    select (letra,letra_desc,media4) %>%
+    filter (letra == "D" | letra =="B" |letra == "R" |letra =="P") %>% 
+    filter(year == 2022 | year == 2014)
+   
+  
+    tabla_actividades_pivot <- tabla_4_actividades_test %>% 
+      select(letra_desc,year,media4) %>% 
+      pivot_wider(names_from = "year",
+                  values_from = "media4") %>% 
+      mutate(Diff = ((`2022`/`2014`)-1)*100)
+      
+
+```
+```{r echo=FALSE}
+tabla_actividades_pivot 
+```
+
+
+
+
+
+
+
+Este aumento de la brecha entre estas actividades, que se acelera con más fuerza luego del 2019, pudo haberse dado por la pandemia del COVD-19 donde la suspensión clases como de espectáculos golpeó  la economía de las actividades enseñanza y Servicios culturales y de esparcimiento.
+
+
+
+
