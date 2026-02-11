@@ -1,0 +1,560 @@
+---
+title: "Agenda Setting analisis"
+output:
+  pdf_document: default
+  word_document: default
+date: '2023-02-24'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+## Carga de librerías
+
+
+library(tidyverse)
+library(tidytext)
+library(wordcloud2)
+library(wordcloud)
+library(textmineR)
+library(mlapi)
+library(lubridate)
+library(zoo)
+library(purrr)
+library(htmlwidgets)
+library(webshot)
+webshot::install_phantomjs()
+```
+
+## Leer csv de noticias
+
+```{r}
+
+corpus_noticias <- read.csv("./M5_corpus_medios.csv")
+```
+
+#limpieza
+```{r}
+corpus_noticias_limpio<- corpus_noticias %>% 
+  mutate(
+  texto_limpio =
+    str_c(titulo, '\n ', texto) %>%
+    # Remueve hipervínculos
+    str_replace_all('(http[^ ]*)', ' ') %>%
+    str_replace_all('(www[^ ]*)', ' ') %>%
+    # Remueve números
+    str_replace_all('[[:digit:]]+', ' ') %>%
+    # minusculas
+    tolower() %>%
+    # Remueve todo lo que no sea alfanumérico
+    str_replace_all('[^[:alnum:]áéíóúñ]', ' ') %>%
+    # Remueve espacios extra
+    str_replace_all('[[:space:]]+', ' ') %>%
+    # Remueve espacios blancos
+    str_trim() %>% 
+    # Remueve acentos
+    iconv(to = "ASCII//TRANSLIT")
+)
+
+ 
+```
+
+
+
+## creamos diccionario de stop words
+```{r}
+stop_words <- read_csv('https://raw.githubusercontent.com/Alir3z4/stop-words/master/spanish.txt', col_names=FALSE) %>%
+  rename(word = X1) %>%
+  mutate(word = stringi::stri_trans_general(word, "Latin-ASCII"))
+
+
+# Creamos un nuevo dataframe con las nuevas palabras para el diccionario
+nuevas_palabras <- data.frame(word = c("ano", "anos", "whatsapp", "twitter", "facebook", "mail", "compartir", "comentar", "guardar","embed","jpg","clarin","infobae","cronica","la nacion","lanacion","minutouno","pagina","pagina12","telam","perfil","gusta","compartir","fuente", "agosto","septiembre","foto","argentina","gobierno","presidente","pais","dia","dias","lee","ciento","millones","credito","nacional","acuerdo","semana","ciudad","casa","san","ciudad","hombre","personas","vida","video","mil","julio","aires","mujer","buenos","historia","gente","mira","horas","medio","situacion"))
+
+# Agregamos el nuevo dataframe a la lista de stop_words
+stop_words <- bind_rows(stop_words, nuevas_palabras) %>%
+  distinct()  # Eliminar filas duplicadas
+
+
+```
+
+#pasamos el corpus de noticias limpio a  tidy y creamos los total words por medio
+
+```{r}
+articles_tidy_por_medio <- corpus_noticias_limpio %>%
+        mutate(entry_number = row_number()) %>%
+        unnest_tokens(output = word, 
+                      input = texto_limpio) %>%
+        group_by(medio, word) %>%
+        summarise(n = n()) %>%
+        arrange(desc(n)) %>%
+        ungroup()
+
+total_words <- articles_tidy_por_medio %>% 
+  group_by(medio) %>% 
+  summarize(total = sum(n))
+
+articles_tidy_por_medio <- articles_tidy_por_medio %>%
+                left_join(total_words) %>%
+                ungroup()
+
+```
+
+#anti join con stop words
+
+```{r}
+articles_tidy_por_medio <-  articles_tidy_por_medio %>%
+  anti_join(stop_words)
+```
+
+#aplicamos la métrica td_idf
+
+```{r}
+articles_tf_idf <- articles_tidy_por_medio %>%
+  bind_tf_idf(word, medio, n)
+```
+
+
+
+#ordenamos por tf
+```{r echo=FALSE}
+articles_tf_idf %>%
+  select(-total) %>%
+  arrange(desc(tf))
+```
+#visualizamos con grafico de barras horizontal y facet_wrap
+
+
+```{r echo=FALSE}
+library(forcats)
+
+grafico_barras_horizontal_fw <- articles_tf_idf %>%
+  group_by(medio) %>%
+        slice_max(tf, n = 10) %>%
+        ungroup() %>%
+        ggplot(aes(n, fct_reorder(word,-tf), fill = medio)) +
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~medio, ncol = 2, scales = "free") +
+        labs(x = "tf", y = NULL) +
+        theme_minimal()+
+        theme(axis.text.y = element_text(size = 8),
+              axis.text.x = element_text(size = 8))
+
+grafico_barras_horizontal_fw
+```
+
+#guardamos el gráfico
+
+```{r}
+ggsave("grafico_1.png", plot = grafico_barras_horizontal_fw, width = 8, height = 6, dpi = 300)
+
+```
+
+
+#hacemos nubes de palabras por medio para indagar mas la visualización anterior
+
+```{r}
+wordcloud_pagina12 <- articles_tf_idf %>% 
+  filter(medio == "pagina12") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>% 
+   wordcloud2()
+
+wordcloud_clarin <- articles_tf_idf %>% 
+  filter(medio == "clarin") %>% 
+ select(word, tf) %>%
+  filter(tf>0.001) %>%
+   wordcloud2()
+
+wordcloud_telam <- articles_tf_idf %>% 
+  filter(medio == "telam") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>% 
+   wordcloud2()
+
+wordcloud_infobae <- articles_tf_idf %>% 
+  filter(medio == "infobae") %>% 
+ select(word, tf) %>%
+  filter(tf>0.001) %>%
+   wordcloud2()
+
+wordcloud_cronica <- articles_tf_idf %>% 
+  filter(medio == "cronica") %>% 
+select(word, tf) %>%
+  filter(tf>0.001) %>% 
+   wordcloud2()
+
+wordcloud_lanacion <- articles_tf_idf %>% 
+  filter(medio == "lanacion") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>%
+   wordcloud2()
+
+wordcloud_minutouno <- articles_tf_idf %>% 
+  filter(medio == "minutouno") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>%
+   wordcloud2()
+
+wordcloud_perfil <- articles_tf_idf %>% 
+  filter(medio == "perfil") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>%
+   wordcloud2()
+```
+
+#explorador de wordlcouds
+```{r}
+ articles_tf_idf %>% 
+  filter(medio == "perfil") %>% 
+  select(word, tf) %>%
+  filter(tf>0.001) %>% 
+   wordcloud2()
+```
+
+#guardamos las wordclouds
+```{r}
+saveWidget(wordcloud_pagina12, file = "pagina12_wordcloud.html")
+
+webshot("pagina12_wordcloud.html", "pagina12_wordcloud.png")
+
+saveWidget(wordcloud_clarin, file = "wordcloud_clarin.html")
+
+webshot("wordcloud_clarin.html", "wordcloud_clarin.png")
+
+saveWidget(wordcloud_perfil, file = "wordcloud_perfil.html")
+
+webshot("wordcloud_perfil.html", "wordcloud_perfil.png")
+
+saveWidget(wordcloud_lanacion, file = "wordcloud_lanacion.html")
+
+webshot("wordcloud_lanacion.html", "wordcloud_lanacion.png")
+
+saveWidget(wordcloud_minutouno, file = "wordcloud_minutouno.html")
+
+webshot("wordcloud_minutouno.html", "wordcloud_minutouno.png")
+
+saveWidget(wordcloud_telam, file = "wordcloud_telam.html")
+
+webshot("wordcloud_telam.html", "wordcloud_telam.png")
+
+saveWidget(wordcloud_cronica, file = "wordcloud_cronica.html")
+
+webshot("wordcloud_cronica.html", "wordcloud_cronica.png")
+
+saveWidget(wordcloud_infobae, file = "wordcloud_infobae.html")
+
+webshot("wordcloud_infobae.html", "wordcloud_infobae.png")
+
+```
+
+
+#explorador de palabras claves: unnest_tokens por título.
+
+```{r}
+articles_tidy_por_titulo <- corpus_noticias_limpio %>%
+        mutate(entry_number = row_number()) %>%
+        unnest_tokens(output = word, 
+                      input = texto_limpio) %>%
+        group_by(titulo,medio, word) %>%
+        summarise(n = n()) %>%
+        arrange(desc(n)) %>%
+        ungroup()
+
+total_words <- articles_tidy_por_titulo %>% 
+  group_by(medio) %>% 
+  summarize(total = sum(n))
+
+
+articles_tidy_por_titulo <-  articles_tidy_por_titulo %>%
+  anti_join(stop_words)
+
+
+```
+#explorador
+
+```{r}
+#jugar con los filtros para explorar
+articles_explorer <- articles_tidy_por_titulo %>% 
+  filter(medio == "infobae") %>% 
+  filter(word == "unidos")
+```
+
+
+
+#TOPIC MODELING
+#paso 1: conteo de palabras
+
+```{r}
+#1 - Articles tidy : sin medio, ni titulo
+
+articles_tidy <- corpus_noticias_limpio %>%
+  unnest_tokens(word, texto_limpio)
+
+#2 - Anti join con stop words
+articles_tidy <- articles_tidy %>%
+  anti_join(stop_words)
+
+#3 - Conteo de palabras agrupado por ID del artículo y palabra
+conteo_palabras <- articles_tidy %>%
+  group_by(id, word) %>%
+  summarise(n=n()) %>%
+  ungroup()
+
+```
+#paso 2: creamos la document term matrix (DTM)
+
+```{r}
+disc_dtm <- conteo_palabras %>%
+  cast_dtm(id, word, n)
+
+```
+
+#paso 3: una vez que tenemos la DTM aplicamos el algortimo LDA (latent Dirichlet Allocation)
+```{r}
+
+#lda_10 <- LDA(disc_dtm, k=10, control = list(seed = 1234)) #le aplicamos un K de 10, es decir que nos genere 10 topicos
+
+#para no correrlo ya que tarda bastante lo leemos directamente
+
+lda_10 <- read_rds("./lda_10_model.rds")
+```
+
+#paso 4: aplicamos la función tidy a la matriz beta y de este modo traemos la probabilidad de cada palabra de ser parte de uno de los 10 tópicos
+```{r}
+ap_topics <- tidy(lda_10, matrix = "beta")
+
+ap_topics <-  ap_topics %>% #tenemos que renombrar la columna para hacer el antijoin
+  rename (word= term)
+
+ap_topics <- ap_topics %>% # volvemos a hacer el antijoin porque el lda_10 que leimos contiene palabras que luego limpiamos en nuestro dic de stopwords
+  anti_join(stop_words)
+
+
+```
+
+#paso 5: creamos una tibble con grupos top terminos por topico. Es decir que nos va devolver las 15 palabras con más beta para cada tópico
+```{r}
+ap_top_terms <- ap_topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 15) %>% 
+  ungroup() %>%
+  arrange(topic, -beta)
+
+ap_top_terms
+```
+
+#paso 6: visualizamos esta tible de top terms en un gráfico de columnas
+```{r}
+ap_top_terms %>%
+  mutate(word = reorder_within(word, beta, topic)) %>%
+  ggplot(aes(beta, word, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales='free_y') +
+  scale_y_reordered() +
+  theme_minimal()
+```
+#paso 7: a cada tópico le aplicamos un nombre para identificarlo
+```{r}
+ap_topics <- ap_topics %>% 
+  mutate(topic_name = ifelse(topic == 1,"espectáculos",
+                      ifelse(topic == 2, "deportes",
+                      ifelse(topic ==3, "general",
+                      ifelse(topic==4,"internacional",
+                      ifelse(topic==5,"política",
+                      ifelse(topic==6, "sociedad",
+                      ifelse(topic==7, "judiciales",
+                      ifelse(topic==8,"policiales",
+                      ifelse(topic==9, "economía",
+                      ifelse(topic==10,"familia","otro")))))
+                                           ))))))
+```
+
+#paso 8: ahora creamos un objeto con la visualización anterior pero la hacemos con la nueva columna 'topic_name' y la guardamos
+
+```{r}
+ap_top_terms <- ap_topics %>%
+  group_by(topic_name) %>%
+  slice_max(beta, n = 15) %>% 
+  ungroup() %>%
+  arrange(topic_name, -beta)
+
+topicos_por_top_terminos <- ap_top_terms %>%
+  mutate(word = reorder_within(word, beta, topic_name)) %>%
+  ggplot(aes(beta, word, fill = factor(topic_name))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic_name, scales='free_y') +
+  scale_y_reordered() +
+  theme_minimal()
+
+topicos_por_top_terminos #la visualizamos
+
+#ggsave("grafico_topicos_por_top_terminos.png", plot = topicos_por_top_terminos, width = 8, height = 6, dpi = 300)
+
+```
+
+
+
+#paso 8: aplicamos la función tidy a la matriz gama que nos da la probabilidad por documento de ser parte de un tópico
+```{r}
+doc_topics <- tidy(lda_10, matrix = "gamma")
+
+doc_topics <- doc_topics %>%
+  mutate(gamma = round(gamma, 5))#redondeamos el número gamma a 5 decimales
+```
+
+#paso 9: joineamos ap_topics con doc_topics y de este modo llevamos los topic names a la matriz gamma
+
+```{r}
+doc_topics_con_topic_name <- doc_topics %>% 
+  left_join(ap_topics %>% select(topic,topic_name) %>% unique())
+
+
+```
+#paso 10: a la matriz gamma la joineamos con el corpus de noticias limpio
+```{r}
+docs_topics_con_topic_name <- doc_topics_con_topic_name %>%
+  rename(id = document) %>% # tenemos que renombrar la columna para que pueda hacerse el join
+  mutate(id = as.integer(id)) %>%
+  mutate(topic_name = as.character(topic_name)) %>% 
+  left_join(corpus_noticias_limpio %>% select(id, medio) %>% unique()) %>%
+  group_by(medio, topic_name) %>%
+  summarise(mean = mean(gamma)*100
+  )
+```
+#paso 11: creamos gráfico de barras con tópicos por medio y lo guardamos
+
+```{r}
+# Define un vector de colores para cada tema
+colores <- c("red", "blue", "green", "orange", "purple","yellow","Turquoise","#333333","Brown","Magenta")
+
+# Graficar
+topico_por_medio <- docs_topics_con_topic_name %>%
+  ggplot() +
+  geom_col(aes(x= medio, y= mean, fill=topic_name), stat='identity', position='dodge') +
+  theme_minimal() +
+  scale_fill_manual(values = colores) # Asigna los colores definidos al gráfico
+
+# Mostrar el gráfico
+topico_por_medio
+
+#ggsave("grafico_topicos_por_medios.png", plot = topico_por_medio, width = 8, height = 6, dpi = 300)
+
+```
+
+
+#probamos con otro gráfico de tópico por medio con facet_wrap
+```{r}
+topico_por_medio_2 <- docs_topics_con_topic_name %>%
+  group_by(medio) %>%
+  ggplot(aes(mean, fct_reorder(topic_name,-mean), fill = topic_name)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~medio, ncol = 2, scales = "free") +
+  labs(x = "mean", y = NULL) +
+  theme_minimal()+
+  theme(axis.text.y = element_text(size = 8),
+        axis.text.x = element_text(size = 8))+
+  scale_fill_manual(values = colores) # Asigna los colores definidos al gráfico
+
+
+# Mostrar el gráfico
+topico_por_medio_2
+
+#ggsave("grafico_topicos_por_medios_2.png", plot = topico_por_medio_2, width = 8, height = 6, dpi = 300)
+
+```
+
+
+
+#paso 11bis: creamos un gráfico de tópicos general sin medio.
+
+```{r}
+
+topics_topic_name_gral <- docs_topics_con_topic_name %>% 
+select(topic_name,mean) %>% unique() %>%
+  group_by(topic_name) %>%
+  summarise(mean = mean(mean)*100
+  )
+
+
+
+topico_general <-  topics_topic_name_gral %>%
+  ggplot() +
+  geom_col(aes(x = reorder(topic_name, -mean), y= mean, fill=topic_name), stat='identity', position='dodge', show.legend = FALSE) +
+  theme_minimal() +
+  scale_fill_manual(values = colores) + # Asigna los colores definidos al gráfico
+    labs(x = "topic_name")
+ 
+topico_general
+
+# ggsave("grafico_topicos_general.png", plot = topico_general, width = 8, height = 6, dpi = 300)
+
+```
+
+
+#paso 12: necesitamos joinear la tabla de documentos por tópico con las fechas para poder trazar un evolutivo de los tópicos a lo largo del tiempo
+```{r}
+
+tabla_topics_doc_con_fechas <-doc_topics_con_topic_name %>% 
+  rename(id = document) %>% #para hacer join renombramos document x id
+  mutate(id = as.integer(id)) %>%
+  mutate(topic_name = as.character(topic_name)) %>%
+  left_join(corpus_noticias_limpio %>% select(id, medio,fecha) %>% unique()) %>%
+  mutate(fecha = ymd(fecha)) %>% 
+  group_by(medio, topic_name, fecha) %>%
+  summarise(mean = mean(gamma)*100) %>% 
+  mutate(moving_average = zoo::rollmeanr(mean, 7, fill = NA))# it is a way to smooth out the noise and fluctuations in the data, making it easier to identify trends and patterns over time.
+
+
+```
+
+#paso 13: armamos la visualización temporal tomando el 'moving_average' que nos permite suavizar las fluctuaciones de datos y al supuesto del LDA de que los tópicos no cambian en el tiempo
+```{r}
+
+
+
+grafico_evolutivo_topics_por_medio <- tabla_topics_doc_con_fechas %>% 
+  ggplot( aes(x=fecha, y=moving_average, group=topic_name, color=topic_name)) +
+  geom_line() +
+  scale_color_manual(values = colores) + # Asigna los colores definidos al gráfico
+  facet_wrap(~ medio, scales='free_y') +
+  ggtitle("Evolutivo tópicos por medio") +
+  ylab("moving_average")+
+  theme_minimal()
+
+grafico_evolutivo_topics_por_medio
+
+#ggsave("grafico_evolutivo_topics_por_medios.png", plot = grafico_evolutivo_topics_por_medio, width = 8, height = 6, dpi = 300)
+
+
+```
+
+#paso 14: armamos la visualización temporal tomando el 'moving_average' que nos permite suavizar las fluctuaciones de datos y al supuesto del LDA de que los tópicos no cambian en el tiempo pero sin facet_wrap
+
+```{r}
+tabla_topics_doc_con_fechas_sin_medio <- doc_topics_con_topic_name %>% 
+  rename(id = document) %>% #para hacer join renombramos document x id
+  mutate(id = as.integer(id)) %>%
+  mutate(topic_name = as.character(topic_name)) %>%
+  left_join(corpus_noticias_limpio %>% select(id,fecha) %>% unique()) %>%
+  mutate(fecha = ymd(fecha)) %>% 
+  group_by(topic_name, fecha) %>%
+  summarise(mean = mean(gamma)*100) %>% 
+  mutate(moving_average = zoo::rollmeanr(mean, 7, fill = NA))# it is a way to smooth out the noise and fluctuations in the data, making it easier to identify trends and patterns over time.
+
+
+grafico_evolutivo_topics_por_día <- tabla_topics_doc_con_fechas_sin_medio%>% 
+  ggplot( aes(x=fecha, y=moving_average, color=topic_name)) +
+  geom_line() +
+  scale_color_manual(values = colores) + # Asigna los colores definidos al gráfico
+  ggtitle("Evolutivo tópicos por día") +
+  ylab("moving_average")+
+  theme_minimal()
+
+grafico_evolutivo_topics_por_día
+
+#ggsave("grafico_evolutivo_topics_por_día.png", plot = grafico_evolutivo_topics_por_día, width = 8, height = 6, dpi = 300)
+```
